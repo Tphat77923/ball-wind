@@ -1,1 +1,504 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1'>
+  <title>Ball And Wind Maze</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
 
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: #ffffff;
+      color: #111111;
+      font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    #game-container {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+      max-width: 960px;
+    }
+
+    #hud {
+      display: flex;
+      justify-content: space-between;
+      font-size: clamp(16px, 2vw, 20px);
+      letter-spacing: 0.04em;
+    }
+
+    canvas {
+      width: 100%;
+      height: auto;
+      border: 4px solid #111111;
+      background: #ffffff;
+      touch-action: none;
+    }
+
+    #message {
+      text-align: center;
+      font-size: clamp(16px, 2.5vw, 24px);
+      min-height: 1.5em;
+    }
+  </style>
+</head>
+<body>
+  <div id='game-container'>
+    <div id='hud'>
+      <div id='level-label'>Level 1 / 4</div>
+      <div id='timer-label'>Time: 00.0s</div>
+    </div>
+    <canvas id='game' width='960' height='640'></canvas>
+    <div id='message'></div>
+  </div>
+  <script>
+    'use strict'
+
+    const canvas = document.getElementById('game')
+    const ctx = canvas.getContext('2d')
+    const levelLabel = document.getElementById('level-label')
+    const timerLabel = document.getElementById('timer-label')
+    const messageBox = document.getElementById('message')
+
+    const state = {
+      width: canvas.width,
+      height: canvas.height,
+      levelIndex: 0,
+      levelTimer: 0,
+      timeRemaining: 0,
+      levels: [],
+      ball: null,
+      running: true,
+      won: false,
+      lastTimestamp: 0
+    }
+
+    const createVector = (x, y) => ({ x, y })
+
+    const normalize = vector => {
+      const magnitude = Math.hypot(vector.x, vector.y)
+      if (magnitude === 0) return createVector(0, 0)
+      return createVector(vector.x / magnitude, vector.y / magnitude)
+    }
+
+    const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y)
+
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
+
+    const createBall = (x, y, radius) => ({
+      position: createVector(x, y),
+      velocity: createVector(0, 0),
+      acceleration: createVector(0, 0),
+      radius,
+      maxSpeed: 320,
+      damping: 0.985
+    })
+
+    const createFan = ({ x, y, direction, strength = 9000, radius = 260, initialOn = false, name }) => ({
+      position: createVector(x, y),
+      direction: normalize(direction),
+      strength,
+      radius,
+      on: initialOn,
+      initialOn,
+      name: name || '',
+      toggleCooldown: 0
+    })
+
+    const createHole = (x, y, radius) => ({ position: createVector(x, y), radius })
+
+    const createWall = (x, y, width, height) => ({ x, y, width, height })
+
+    const configureLevels = () => {
+      const w = state.width
+      const h = state.height
+
+      const outerWalls = () => [
+        createWall(0, 0, w, 30),
+        createWall(0, h - 30, w, 30),
+        createWall(0, 0, 30, h),
+        createWall(w - 30, 0, 30, h)
+      ]
+
+      const level1 = {
+        name: 'Straight Breeze',
+        timeLimit: 25,
+        ballStart: createVector(120, h / 2),
+        hole: createHole(w - 140, h / 2, 26),
+        fans: [
+          createFan({ x: 80, y: h / 2, direction: createVector(1, 0), initialOn: false, radius: 320, strength: 9600, name: 'F1' })
+        ],
+        walls: [
+          ...outerWalls(),
+          createWall(30, h / 2 - 90, w - 60, 24),
+          createWall(30, h / 2 + 66, w - 60, 24)
+        ]
+      }
+
+      const level2 = {
+        name: 'Corner Gust',
+        timeLimit: 35,
+        ballStart: createVector(120, h - 140),
+        hole: createHole(w - 160, 220, 26),
+        fans: [
+          createFan({ x: 220, y: h - 160, direction: createVector(1, 0), strength: 9400, radius: 300, name: 'F1' }),
+          createFan({ x: 560, y: h - 220, direction: createVector(0, -1), strength: 8800, radius: 260, name: 'F2' })
+        ],
+        walls: [
+          ...outerWalls(),
+          createWall(30, h - 220, 500, 20),
+          createWall(30, h - 80, 560, 20),
+          createWall(30, h - 220, 20, 140),
+          createWall(500, h - 320, 20, 120),
+          createWall(620, h - 360, 20, 280),
+          createWall(500, h - 360, 140, 20),
+          createWall(500, 200, 140, 20),
+          createWall(500, 200, 20, 140),
+          createWall(700, 200, 130, 20),
+          createWall(700, 200, 20, 160)
+        ]
+      }
+
+      const level3 = {
+        name: 'Crosswinds',
+        timeLimit: 45,
+        ballStart: createVector(120, h - 140),
+        hole: createHole(w - 150, 140, 26),
+        fans: [
+          createFan({ x: 200, y: h - 180, direction: createVector(1, 0), strength: 9600, radius: 280, name: 'F1' }),
+          createFan({ x: 380, y: h - 260, direction: createVector(0, -1), strength: 8500, radius: 220, name: 'F2' }),
+          createFan({ x: 440, y: 320, direction: createVector(-1, 0), strength: 7300, radius: 220, name: 'F3' }),
+          createFan({ x: 660, y: 300, direction: createVector(0, -1), strength: 8200, radius: 240, name: 'F4' }),
+          createFan({ x: 520, y: 460, direction: createVector(0, 1), strength: 6400, radius: 200, name: 'Dummy', initialOn: true })
+        ],
+        walls: [
+          ...outerWalls(),
+          createWall(30, h - 220, 360, 20),
+          createWall(30, h - 80, 420, 20),
+          createWall(370, h - 320, 20, 120),
+          createWall(190, 220, 20, h - 420),
+          createWall(190, 220, 300, 20),
+          createWall(470, 220, 20, 160),
+          createWall(470, 360, 180, 20),
+          createWall(630, 200, 20, 180),
+          createWall(630, 200, 200, 20),
+          createWall(630, 420, 200, 20),
+          createWall(810, 200, 20, 240),
+          createWall(470, 480, 20, 120),
+          createWall(470, 480, 200, 20),
+          createWall(650, 480, 20, 120)
+        ]
+      }
+
+      const level4 = {
+        name: 'Wind Orchestra',
+        timeLimit: 55,
+        ballStart: createVector(120, h - 120),
+        hole: createHole(w - 140, 120, 26),
+        fans: [
+          createFan({ x: 160, y: h - 200, direction: createVector(1, 0), strength: 9400, radius: 280, name: 'F1' }),
+          createFan({ x: 340, y: h - 220, direction: createVector(0, -1), strength: 9000, radius: 240, name: 'F2' }),
+          createFan({ x: 340, y: 260, direction: createVector(-1, 0), strength: 7600, radius: 210, name: 'F3' }),
+          createFan({ x: 520, y: 220, direction: createVector(1, 0), strength: 8200, radius: 260, name: 'F4' }),
+          createFan({ x: 640, y: 340, direction: createVector(0, 1), strength: 7000, radius: 220, name: 'F5' }),
+          createFan({ x: 720, y: 220, direction: createVector(-1, 0), strength: 7600, radius: 240, name: 'F6' }),
+          createFan({ x: 520, y: h - 220, direction: createVector(0, 1), strength: 6400, radius: 200, name: 'F7', initialOn: true }),
+          createFan({ x: 760, y: h - 220, direction: createVector(-1, 0), strength: 7800, radius: 240, name: 'F8' })
+        ],
+        walls: [
+          ...outerWalls(),
+          createWall(30, h - 220, 240, 20),
+          createWall(30, h - 80, 320, 20),
+          createWall(270, h - 320, 20, 120),
+          createWall(270, 260, 20, h - 520),
+          createWall(270, 260, 160, 20),
+          createWall(430, 260, 20, 140),
+          createWall(430, 400, 160, 20),
+          createWall(590, 200, 20, 220),
+          createWall(590, 200, 140, 20),
+          createWall(710, 200, 20, 160),
+          createWall(710, 360, 180, 20),
+          createWall(710, 360, 20, 200),
+          createWall(530, h - 220, 20, 140),
+          createWall(530, h - 220, 230, 20),
+          createWall(760, h - 360, 20, 140)
+        ]
+      }
+
+      state.levels = [level1, level2, level3, level4]
+    }
+
+    const resetBall = () => {
+      const level = state.levels[state.levelIndex]
+      state.ball = createBall(level.ballStart.x, level.ballStart.y, 18)
+      state.timeRemaining = level.timeLimit
+      state.levelTimer = 0
+      state.won = false
+      state.running = true
+      messageBox.textContent = level.name
+      canvas.classList.remove('waiting')
+      level.fans.forEach(fan => {
+        fan.on = fan.initialOn || false
+        fan.toggleCooldown = 0
+      })
+      levelLabel.textContent = `Level ${state.levelIndex + 1} / ${state.levels.length}`
+    }
+
+    const startLevel = index => {
+      state.levelIndex = index
+      resetBall()
+    }
+
+    const nextLevel = () => {
+      if (state.levelIndex + 1 < state.levels.length) {
+        startLevel(state.levelIndex + 1)
+      } else {
+        messageBox.textContent = 'All levels completed! Refresh to play again.'
+        state.running = false
+      }
+    }
+
+    const applyFanForce = (fan, ball, dt) => {
+      if (!fan.on) return
+      const toBall = createVector(ball.position.x - fan.position.x, ball.position.y - fan.position.y)
+      const distanceToBall = Math.hypot(toBall.x, toBall.y)
+      if (distanceToBall > fan.radius || distanceToBall === 0) return
+      const influence = 1 - distanceToBall / fan.radius
+      const alignment = (toBall.x * fan.direction.x + toBall.y * fan.direction.y) / distanceToBall
+      if (alignment <= -0.3) return
+      const magnitude = fan.strength * influence * Math.max(alignment, 0.2)
+      ball.acceleration.x += fan.direction.x * magnitude * dt
+      ball.acceleration.y += fan.direction.y * magnitude * dt
+    }
+
+    const handleCollisions = ball => {
+      const level = state.levels[state.levelIndex]
+      level.walls.forEach(wall => {
+        const nearestX = clamp(ball.position.x, wall.x, wall.x + wall.width)
+        const nearestY = clamp(ball.position.y, wall.y, wall.y + wall.height)
+        const dx = ball.position.x - nearestX
+        const dy = ball.position.y - nearestY
+        const distSq = dx * dx + dy * dy
+        if (distSq < ball.radius * ball.radius) {
+          const dist = Math.sqrt(distSq) || 0.0001
+          const overlap = ball.radius - dist
+          const nx = dx / dist
+          const ny = dy / dist
+          ball.position.x += nx * overlap
+          ball.position.y += ny * overlap
+          const dot = ball.velocity.x * nx + ball.velocity.y * ny
+          if (dot < 0) {
+            ball.velocity.x -= 1.8 * dot * nx
+            ball.velocity.y -= 1.8 * dot * ny
+          }
+        }
+      })
+    }
+
+    const updateBall = (dt) => {
+      const ball = state.ball
+      ball.acceleration.x = 0
+      ball.acceleration.y = 0
+      const level = state.levels[state.levelIndex]
+      level.fans.forEach(fan => applyFanForce(fan, ball, dt))
+      ball.velocity.x += ball.acceleration.x * dt
+      ball.velocity.y += ball.acceleration.y * dt
+      const speed = Math.hypot(ball.velocity.x, ball.velocity.y)
+      if (speed > ball.maxSpeed) {
+        const scale = ball.maxSpeed / speed
+        ball.velocity.x *= scale
+        ball.velocity.y *= scale
+      }
+      ball.position.x += ball.velocity.x * dt
+      ball.position.y += ball.velocity.y * dt
+      ball.velocity.x *= ball.damping
+      ball.velocity.y *= ball.damping
+      handleCollisions(ball)
+    }
+
+    const checkHole = () => {
+      const level = state.levels[state.levelIndex]
+      const hole = level.hole
+      const ball = state.ball
+      const dist = distance(ball.position, hole.position)
+      if (dist < hole.radius - 2) {
+        state.won = true
+        state.running = false
+        messageBox.textContent = 'Hole in one! Click to continue.'
+      }
+    }
+
+    const updateTimer = dt => {
+      state.levelTimer += dt
+      state.timeRemaining -= dt
+      if (state.timeRemaining <= 0) {
+        state.timeRemaining = 0
+        if (!state.won) {
+          state.running = false
+          messageBox.textContent = 'Time is up! Click to retry.'
+        }
+      }
+    }
+
+    const drawWalls = walls => {
+      ctx.fillStyle = '#111111'
+      walls.forEach(wall => {
+        ctx.fillRect(wall.x, wall.y, wall.width, wall.height)
+      })
+    }
+
+    const drawHole = hole => {
+      ctx.fillStyle = '#111111'
+      ctx.beginPath()
+      ctx.arc(hole.position.x, hole.position.y, hole.radius, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.fillStyle = '#ffffff'
+      ctx.beginPath()
+      ctx.arc(hole.position.x, hole.position.y, hole.radius - 6, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    const drawBall = ball => {
+      ctx.fillStyle = '#111111'
+      ctx.beginPath()
+      ctx.arc(ball.position.x, ball.position.y, ball.radius, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    const drawFan = (fan, dt) => {
+      if (fan.toggleCooldown > 0) {
+        fan.toggleCooldown = Math.max(0, fan.toggleCooldown - dt)
+      }
+      const arrowLength = 42
+      const arrowWidth = 20
+      const tailLength = 24
+      const perp = createVector(-fan.direction.y, fan.direction.x)
+      const head = createVector(
+        fan.position.x + fan.direction.x * arrowLength,
+        fan.position.y + fan.direction.y * arrowLength
+      )
+      const baseLeft = createVector(
+        fan.position.x + perp.x * arrowWidth,
+        fan.position.y + perp.y * arrowWidth
+      )
+      const baseRight = createVector(
+        fan.position.x - perp.x * arrowWidth,
+        fan.position.y - perp.y * arrowWidth
+      )
+      ctx.fillStyle = fan.on ? '#ffffff' : '#111111'
+      ctx.strokeStyle = '#111111'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(baseLeft.x, baseLeft.y)
+      ctx.lineTo(baseRight.x, baseRight.y)
+      ctx.lineTo(head.x, head.y)
+      ctx.closePath()
+      ctx.fill()
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.moveTo(baseLeft.x, baseLeft.y)
+      ctx.lineTo(
+        fan.position.x - fan.direction.x * tailLength + perp.x * 0.4 * arrowWidth,
+        fan.position.y - fan.direction.y * tailLength + perp.y * 0.4 * arrowWidth
+      )
+      ctx.moveTo(baseRight.x, baseRight.y)
+      ctx.lineTo(
+        fan.position.x - fan.direction.x * tailLength - perp.x * 0.4 * arrowWidth,
+        fan.position.y - fan.direction.y * tailLength - perp.y * 0.4 * arrowWidth
+      )
+      ctx.stroke()
+      ctx.font = '16px "Segoe UI", sans-serif'
+      ctx.fillStyle = '#111111'
+      ctx.textAlign = 'center'
+      ctx.fillText(fan.name, fan.position.x, fan.position.y + 46)
+      ctx.globalAlpha = 0.12
+      ctx.beginPath()
+      ctx.arc(fan.position.x, fan.position.y, fan.radius, 0, Math.PI * 2)
+      ctx.fillStyle = fan.on ? '#000000' : '#666666'
+      ctx.fill()
+      ctx.globalAlpha = 1
+    }
+
+    const draw = dt => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+      const level = state.levels[state.levelIndex]
+      drawWalls(level.walls)
+      drawHole(level.hole)
+      level.fans.forEach(fan => drawFan(fan, dt))
+      drawBall(state.ball)
+      timerLabel.textContent = `Time: ${state.timeRemaining.toFixed(1)}s`
+    }
+
+    const handlePointer = evt => {
+      evt.preventDefault()
+      const rect = canvas.getBoundingClientRect()
+      const x = (evt.clientX - rect.left) * (canvas.width / rect.width)
+      const y = (evt.clientY - rect.top) * (canvas.height / rect.height)
+      const level = state.levels[state.levelIndex]
+      if (!state.running) {
+        if (state.won) {
+          nextLevel()
+        } else {
+          resetBall()
+        }
+        return
+      }
+      const clickedFan = level.fans.find(fan => distance(fan.position, { x, y }) <= 36)
+      if (clickedFan && clickedFan.toggleCooldown === 0) {
+        clickedFan.on = !clickedFan.on
+        clickedFan.toggleCooldown = 0.25
+      }
+    }
+
+    const update = timestamp => {
+      if (!state.lastTimestamp) state.lastTimestamp = timestamp
+      const dt = Math.min(0.05, (timestamp - state.lastTimestamp) / 1000)
+      state.lastTimestamp = timestamp
+      if (state.running) {
+        updateBall(dt)
+        checkHole()
+        updateTimer(dt)
+      }
+      draw(dt)
+      if (!state.running && state.won) {
+        canvas.classList.add('waiting')
+      }
+      requestAnimationFrame(update)
+    }
+
+    const resizeCanvas = () => {
+      const rectWidth = Math.max(240, Math.min(960, window.innerWidth - 32))
+      const rectHeight = rectWidth * (canvas.height / canvas.width)
+      canvas.style.width = `${rectWidth}px`
+      canvas.style.height = `${rectHeight}px`
+    }
+
+    const init = () => {
+      configureLevels()
+      startLevel(0)
+      resizeCanvas()
+      canvas.addEventListener('pointerdown', handlePointer)
+      window.addEventListener('resize', resizeCanvas)
+      requestAnimationFrame(update)
+    }
+
+    init()
+  </script>
+</body>
+</html>
